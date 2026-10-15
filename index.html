@@ -92,7 +92,6 @@
     }
     .invoice-page:last-child { page-break-after: auto; }
     
-    /* PERFECT ABSOLUTE 3-COLUMN HEADER CENTERING */
     .t-header { border-bottom: 1.5px solid #000; padding: 4px; flex-shrink: 0; text-align: center; }
     .t-header-topline { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; width: 100%; margin-bottom: 2px; }
     .t-title { font-size: 16px; font-weight: bold; letter-spacing: 1px; text-align: center; }
@@ -222,6 +221,7 @@
             <div id="cust-dropdown" class="cust-dropdown"></div>
           </div>
           
+          <!-- AUTO-HIDES FOR NON-GST SHOPS -->
           <div class="form-group" id="group-cust-gstin"><label>Customer GSTIN (Optional)</label><input type="text" id="cust-gstin" placeholder="08AAAAA0000A1Z5"></div>
           
           <div class="form-group"><label>Mobile Number</label><input type="tel" id="cust-phone" placeholder="98XXXXXXXX" oninput="validatePartyLedgerName()"></div>
@@ -442,7 +442,6 @@
             <tbody id="purchase-history-rows"></tbody>
           </table>
         </div>
-
       </div>
     </section>
 
@@ -474,7 +473,7 @@
           <button class="btn btn-outline" onclick="document.getElementById('filter-ledger-from').value=''; document.getElementById('filter-ledger-to').value=''; loadPartyLedger();"><i class="fa-solid fa-rotate-left"></i> Reset</button>
         </div>
 
-        <!-- Post / Edit Voucher Form with Opening Balance Option -->
+        <!-- Post / Edit Voucher Form -->
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; background:#fef3c7; padding:10px; border-radius:6px; margin-bottom:12px;">
           <input type="date" id="rec-date" style="width:140px;">
           <select id="rec-type-select" style="width:160px;" onchange="onLedgerTypeSelectChange()">
@@ -618,7 +617,7 @@
 // =========================================================================
 const COMPANY_CONFIG = {
   // 1. Google Apps Script Web App URL
-  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbw-w73CqHWtMaJsI_5Dfv23Bmrg8tnRnVl62CKazgKQOJv8VjUxH0K0P1w_phN-LNfOsQ/exec",
+  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbzeRZRhHNY_t9cVtDTAb0yUSoPv02lfz9g9Zj0uCL29dyQ5m-Yn7XPrNLLO_EFJSA0D3A/exec",
 
   // 2. फर्म का नाम
   NAME: "NUTAN ELECTRIC",
@@ -626,16 +625,16 @@ const COMPANY_CONFIG = {
   // 3. पूरा पता, संपर्क सूत्र व ईमेल
   ADDRESS: "CHENAR NAGAUR RAJ - 341001",
   PHONE: "+91 9983166734, 9521419539",
-  EMAIL: "nutanelectruc2026@gmail.com",
+  EMAIL: "nutanelectric@gmail.com",
 
   // 4. GSTIN नंबर (बिना GST वाली फर्म के लिए इसे "" खाली छोड़ें)
   GSTIN: "",
 
   // 5. बैंक खाता व UPI विवरण
-  BANK_NAME: "bob",
-  BANK_ACC_NO: "0",
-  BANK_IFSC: "0",
-  UPI_ID: "snk7737-oksbi"
+  BANK_NAME: "HDFC BANK",
+  BANK_ACC_NO: "504",
+  BANK_IFSC: "H02037",
+  UPI_ID: "snk7737-1@oksbi"
 };
 
 // Aliases for unified internal access
@@ -648,7 +647,7 @@ const SHOP_GSTIN = COMPANY_CONFIG.GSTIN;
 const SHOP_UPI_ID = COMPANY_CONFIG.UPI_ID;
 const HAS_SHOP_GST = (SHOP_GSTIN && SHOP_GSTIN.trim().length > 0);
 
-// 100% LIVE IN-MEMORY STORE (NO LOCAL STORAGE CACHING)
+// 100% LIVE IN-MEMORY STORE
 let stock = [];
 let invoices = [];
 let purchases = [];
@@ -818,13 +817,13 @@ function getPartyCurrentBalance(partyName, partyType) {
 
   if (partyType === 'Customer') {
     invoices.filter(i => i.payMode === 'Credit' && (i.customer.name || '').trim().toLowerCase() === pName).forEach(i => {
-      const recorded = ledgerTxns.some(t => t.ref === i.invDisplayNo);
+      const recorded = ledgerTxns.some(t => String(t.ref).trim().toLowerCase() === String(i.invDisplayNo).trim().toLowerCase());
       if (!recorded) debits += (i.grandTotal || 0);
     });
     return (debits - credits);
   } else {
     purchases.filter(p => p.payMode === 'Credit' && (p.supplier || '').trim().toLowerCase() === pName).forEach(p => {
-      const recorded = ledgerTxns.some(t => t.ref === ('PUR-' + p.id));
+      const recorded = ledgerTxns.some(t => String(t.ref).trim().toLowerCase() === ('pur-' + p.id).toLowerCase());
       if (!recorded) credits += (p.total || 0);
     });
     return (credits - debits);
@@ -1307,27 +1306,56 @@ function renderReturnTable() {
   document.getElementById('ret-grand-total').innerText = '₹' + gTot.toFixed(2);
 }
 
+// 🔥 FIX 1: SALES RETURN INSTANT LEDGER UPDATE & STOCK RESTORE
 function executeSaveSalesReturn() {
   if (returnCart.length === 0) return alert('No items selected for return!');
   const cust = document.getElementById('ret-cust-name').value.trim();
   if (!cust) return alert('Please enter Customer Party Name!');
 
+  const returnDate = document.getElementById('ret-date').value || new Date().toISOString().split('T')[0];
+  const returnRemark = document.getElementById('ret-remark').value.trim() || 'Sales Return';
+  const totalReturnAmt = returnCart.reduce((a,b)=>a + (b.qty * b.rate), 0);
+  const returnRef = 'RET-' + Math.floor(1000 + Math.random() * 9000);
+
   const retPayload = {
-    date: document.getElementById('ret-date').value || new Date().toISOString().split('T')[0],
+    date: returnDate,
     customer: cust,
-    remark: document.getElementById('ret-remark').value.trim() || 'Sales Return',
-    total: returnCart.reduce((a,b)=>a + (b.qty * b.rate), 0),
+    remark: returnRemark,
+    total: totalReturnAmt,
+    ref: returnRef,
     items: returnCart
   };
 
+  // 1. Send to Google Apps Script
   fetch(PERMANENT_SCRIPT_URL + "?action=save_sales_return&data=" + encodeURIComponent(JSON.stringify(retPayload)), { mode: 'no-cors' });
 
-  alert('Sales return accepted! Stock increased and ledger credited successfully.');
+  // 2. Immediately push Credit Entry to active ledgerTxns memory
+  ledgerTxns.push({
+    date: returnDate,
+    party: cust,
+    partyType: "Customer",
+    type: "Sales Return (Credit Note)",
+    ref: returnRef,
+    debit: 0,
+    credit: totalReturnAmt,
+    note: returnRemark
+  });
+
+  alert('Sales return accepted! Stock increased and customer ledger credited successfully.');
+  
+  // 3. Clear return cart and switch to ledger with updated balance
   returnCart = [];
+  document.getElementById('ret-bill-search').value = '';
+  document.getElementById('ret-cust-name').value = '';
+  document.getElementById('ret-remark').value = '';
   renderReturnTable();
   syncInventoryStock();
-  loadLedgerTxnsFromCloud();
+  renderPartySelectOptions();
+  
+  // Automatically select party and refresh ledger view
+  document.getElementById('ledger-party-select').value = cust;
   switchTab('ledger');
+  loadPartyLedger();
 }
 
 // --- TWO-WAY PARTY LEDGER MODULE ---
@@ -1370,6 +1398,7 @@ function onLedgerTypeSelectChange() {
   document.getElementById('rec-mode').style.display = (t === 'OPENING') ? 'none' : 'inline-block';
 }
 
+// 🔥 FIX 2: STRICT DEDUPLICATION IN LEDGER (NO MORE DOUBLE ENTRIES)
 function loadPartyLedger() {
   const party = document.getElementById('ledger-party-select').value;
   const box = document.getElementById('ledger-details-box');
@@ -1382,20 +1411,28 @@ function loadPartyLedger() {
   const to = document.getElementById('filter-ledger-to').value;
 
   let allTxns = [];
+  let processedRefs = new Set(); // Strict Set to block duplicate entries
 
   if (currentLedgerType === 'Customer') {
     invoices.filter(i => i.payMode === 'Credit' && (i.customer.name || '').trim().toLowerCase() === party.toLowerCase()).forEach(b => {
+      const cleanRef = String(b.invDisplayNo).trim().toLowerCase();
       allTxns.push({ date: b.date, type: 'Credit Sale Bill', ref: b.invDisplayNo, notes: 'Goods Sold', debit: b.grandTotal, credit: 0, isSystem: true });
+      processedRefs.add(cleanRef);
     });
   } else {
     purchases.filter(p => p.payMode === 'Credit' && (p.supplier || '').trim().toLowerCase() === party.toLowerCase()).forEach(p => {
+      const cleanRef = ('pur-' + p.id).toLowerCase();
       allTxns.push({ date: p.date, type: 'Credit Purchase', ref: 'PUR-' + p.id, notes: p.remark || 'Inward Goods', debit: 0, credit: p.total, isSystem: true });
+      processedRefs.add(cleanRef);
     });
   }
 
+  // Only add ledger transactions that are NOT duplicate bill numbers
   ledgerTxns.filter(t => (t.party || '').trim().toLowerCase() === party.toLowerCase() && t.partyType === currentLedgerType).forEach(t => {
-    if (!allTxns.some(x => x.ref === t.ref && x.type === t.type)) {
+    const refKey = String(t.ref || '').trim().toLowerCase();
+    if (!processedRefs.has(refKey)) {
       allTxns.push({ date: t.date, type: t.type, ref: t.ref, notes: t.note, debit: t.debit, credit: t.credit, isSystem: false });
+      if (refKey) processedRefs.add(refKey);
     }
   });
 
@@ -1506,11 +1543,8 @@ function saveCloudLedgerTransaction() {
 
   if (entryType === 'OPENING') {
     txnType = "Opening Balance";
-    if (currentLedgerType === 'Customer') {
-      debitVal = amt;
-    } else {
-      creditVal = amt;
-    }
+    if (currentLedgerType === 'Customer') debitVal = amt;
+    else creditVal = amt;
   } else {
     if (currentLedgerType === 'Customer') {
       txnType = "Payment In (" + mode + ")";
@@ -1556,7 +1590,7 @@ function promptDeleteLedgerTxn(ref) {
 function formatDateShort(dateStr) {
   if (!dateStr) return '-';
   const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr.split('T')[0];
+  if (isNaN(d.getTime())) return String(dateStr).split('T')[0];
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const day = ('0' + d.getDate()).slice(-2);
   const m = months[d.getMonth()];
@@ -1572,19 +1606,27 @@ function printLedgerStatement() {
   const to = document.getElementById('filter-ledger-to').value;
 
   let allTxns = [];
+  let processedRefs = new Set();
+
   if (currentLedgerType === 'Customer') {
     invoices.filter(i => i.payMode === 'Credit' && (i.customer.name || '').trim().toLowerCase() === party.toLowerCase()).forEach(b => {
+      const cleanRef = String(b.invDisplayNo).trim().toLowerCase();
       allTxns.push({ date: b.date, type: (b.isGst ? 'Sales GST' : 'Sales Retail'), ref: b.invDisplayNo, debit: b.grandTotal, credit: 0 });
+      processedRefs.add(cleanRef);
     });
   } else {
     purchases.filter(p => p.payMode === 'Credit' && (p.supplier || '').trim().toLowerCase() === party.toLowerCase()).forEach(p => {
+      const cleanRef = ('pur-' + p.id).toLowerCase();
       allTxns.push({ date: p.date, type: 'Purchase', ref: 'PUR-' + p.id, debit: 0, credit: p.total });
+      processedRefs.add(cleanRef);
     });
   }
 
   ledgerTxns.filter(t => (t.party || '').trim().toLowerCase() === party.toLowerCase() && t.partyType === currentLedgerType).forEach(t => {
-    if (!allTxns.some(x => x.ref === t.ref && x.type === t.type)) {
+    const refKey = String(t.ref || '').trim().toLowerCase();
+    if (!processedRefs.has(refKey)) {
       allTxns.push({ date: t.date, type: t.type, ref: t.ref, debit: t.debit, credit: t.credit });
+      if (refKey) processedRefs.add(refKey);
     }
   });
 
